@@ -1,0 +1,44 @@
+name: Build QuickBackup
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+
+    - name: Restore NuGet packages
+      run: nuget restore QuickBackup.sln
+
+    - name: Build Release
+      run: msbuild QuickBackup.sln /p:Configuration=Release /p:Platform="Any CPU"
+
+    - name: Create release archive
+      run: |
+        Compress-Archive -Path "QuickBackup\bin\Release\*" -DestinationPath "QuickBackup-Release.zip"
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: QuickBackup-Release
+        path: QuickBackup-Release.zip
+
+    - name: Upload binaries
+      uses: actions/upload-artifact@v4
+      with:
+        name: QuickBackup-Binaries
+        path: |
+          QuickBackup/bin/Release/QuickBackup.exe
+          QuickBackup/bin/Release/QuickBackup.exe.config
