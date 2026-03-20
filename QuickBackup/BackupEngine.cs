@@ -183,9 +183,17 @@ namespace QuickBackup
 
         private string GetRelativePath(string rootPath, string filePath)
         {
-            rootPath = rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!rootPath.EndsWith(Path.DirectorySeparatorChar.ToString()) && !rootPath.EndsWith(Path.AltDirectorySeparatorChar.ToString()))
+            {
+                rootPath += Path.DirectorySeparatorChar;
+            }
+            string fullPath = Path.GetFullPath(filePath);
+            if (fullPath.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return fullPath.Substring(rootPath.Length);
+            }
             Uri rootUri = new Uri(rootPath);
-            Uri fileUri = new Uri(filePath);
+            Uri fileUri = new Uri(fullPath);
             Uri relativeUri = rootUri.MakeRelativeUri(fileUri);
             string relativePath = Uri.UnescapeDataString(relativeUri.ToString());
             return relativePath.Replace('/', Path.DirectorySeparatorChar);
