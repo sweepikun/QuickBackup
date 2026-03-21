@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
 namespace QuickBackup
@@ -11,8 +13,10 @@ namespace QuickBackup
     public class BackupEngine
     {
         private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer();
+        private int _processedFiles = 0;
+        private int _totalFiles = 0;
 
-        public FileSnapshot ScanFolder(string folderPath)
+        public FileSnapshot ScanFolder(string folderPath, Action<int, int, string> progressCallback = null)
         {
             folderPath = Path.GetFullPath(folderPath);
             var snapshot = new FileSnapshot
@@ -24,25 +28,36 @@ namespace QuickBackup
             var files = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories)
                 .Where(f => File.Exists(f)).ToArray();
 
-            foreach (var file in files)
-            {
-                try
-                {
-                    var fi = new FileInfo(file);
-                    var entry = new FileEntry
-                    {
-                        RelativePath = GetRelativePath(snapshot.RootPath, file),
-                        Size = fi.Length,
-                        LastModified = fi.LastWriteTimeUtc,
-                        Sha256 = ComputeSha256(file)
-                    };
-                    snapshot.Files.Add(entry);
-                }
-                catch (Exception)
-                {
-                }
-            }
+            _totalFiles = files.Length;
+            _processedFiles = 0;
 
+            var results = new ConcurrentBag<FileEntry>();
+
+            Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                file =>
+                {
+                    try
+                    {
+                        var fi = new FileInfo(file);
+                        var entry = new FileEntry
+                        {
+                            RelativePath = GetRelativePath(folderPath, file),
+                            Size = fi.Length,
+                            LastModified = fi.LastWriteTimeUtc,
+                            Sha256 = ComputeSha256(file)
+                        };
+                        results.Add(entry);
+
+                        var processed = System.Threading.Interlocked.Increment(ref _processedFiles);
+                        progressCallback?.Invoke(processed, _totalFiles, file);
+                    }
+                    catch (Exception)
+                    {
+                        System.Threading.Interlocked.Increment(ref _processedFiles);
+                    }
+                });
+
+            snapshot.Files = results.ToList();
             return snapshot;
         }
 
@@ -85,7 +100,7 @@ namespace QuickBackup
             return snapshot;
         }
 
-        public DiffResult CompareSnapshots(FileSnapshot oldSnapshot, FileSnapshot newSnapshot)
+        public DiffResult CompareSnapshots(FileSnapshot oldSnapshot, FileSnapshot newSnapshot, Action<int, int, string> progressCallback = null)
         {
             var result = new DiffResult();
 
@@ -101,24 +116,40 @@ namespace QuickBackup
                 newDict[entry.RelativePath] = entry;
             }
 
-            foreach (var kvp in newDict)
-            {
-                if (oldDict.ContainsKey(kvp.Key))
+            int processed = 0;
+            int total = newSnapshot.Files.Count;
+
+            Parallel.ForEach(newSnapshot.Files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                entry =>
                 {
-                    if (oldDict[kvp.Key].Sha256 != kvp.Value.Sha256)
+                    if (oldDict.ContainsKey(entry.RelativePath))
                     {
-                        result.ModifiedFiles.Add(kvp.Value);
+                        if (oldDict[entry.RelativePath].Sha256 != entry.Sha256)
+                        {
+                            lock (result.ModifiedFiles)
+                            {
+                                result.ModifiedFiles.Add(entry);
+                            }
+                        }
+                        else
+                        {
+                            lock (result.UnchangedFiles)
+                            {
+                                result.UnchangedFiles.Add(entry);
+                            }
+                        }
                     }
                     else
                     {
-                        result.UnchangedFiles.Add(kvp.Value);
+                        lock (result.AddedFiles)
+                        {
+                            result.AddedFiles.Add(entry);
+                        }
                     }
-                }
-                else
-                {
-                    result.AddedFiles.Add(kvp.Value);
-                }
-            }
+
+                    var p = System.Threading.Interlocked.Increment(ref processed);
+                    progressCallback?.Invoke(p, total, entry.RelativePath);
+                });
 
             foreach (var kvp in oldDict)
             {
@@ -131,22 +162,24 @@ namespace QuickBackup
             return result;
         }
 
-        public void CopyChangedFiles(string sourceFolder, DiffResult changes, string outputFolder)
+        public void CopyChangedFiles(string sourceFolder, DiffResult changes, string outputFolder, Action<int, int, string> progressCallback = null)
         {
             if (!Directory.Exists(outputFolder))
             {
                 Directory.CreateDirectory(outputFolder);
             }
 
-            foreach (var entry in changes.AddedFiles)
-            {
-                CopyFile(sourceFolder, outputFolder, entry.RelativePath);
-            }
+            var allFiles = changes.AddedFiles.Concat(changes.ModifiedFiles).ToList();
+            int total = allFiles.Count;
+            int processed = 0;
 
-            foreach (var entry in changes.ModifiedFiles)
-            {
-                CopyFile(sourceFolder, outputFolder, entry.RelativePath);
-            }
+            Parallel.ForEach(allFiles, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                entry =>
+                {
+                    CopyFile(sourceFolder, outputFolder, entry.RelativePath);
+                    var p = System.Threading.Interlocked.Increment(ref processed);
+                    progressCallback?.Invoke(p, total, entry.RelativePath);
+                });
 
             if (changes.DeletedFiles.Count > 0)
             {
@@ -168,7 +201,13 @@ namespace QuickBackup
 
             if (!Directory.Exists(destDir))
             {
-                Directory.CreateDirectory(destDir);
+                lock (destDir)
+                {
+                    if (!Directory.Exists(destDir))
+                    {
+                        Directory.CreateDirectory(destDir);
+                    }
+                }
             }
 
             File.Copy(sourcePath, destPath, true);

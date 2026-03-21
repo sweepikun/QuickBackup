@@ -4,6 +4,8 @@ namespace QuickBackup
 {
     class Program
     {
+        static object _consoleLock = new object();
+
         static void Main(string[] args)
         {
             if (args.Length == 0)
@@ -37,7 +39,7 @@ namespace QuickBackup
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Error: " + ex.Message);
+                Console.WriteLine("\nError: " + ex.Message);
                 Environment.Exit(1);
             }
         }
@@ -63,9 +65,9 @@ namespace QuickBackup
 
             Console.WriteLine("Scanning folder: " + folderPath);
             BackupEngine engine = new BackupEngine();
-            var snapshot = engine.ScanFolder(folderPath);
+            var snapshot = engine.ScanFolder(folderPath, ProgressCallback);
+            Console.WriteLine("\nScan complete. " + snapshot.Files.Count + " files recorded.");
             engine.SaveSnapshot(snapshot, snapshotFile);
-            Console.WriteLine("Scan complete. " + snapshot.Files.Count + " files recorded.");
             Console.WriteLine("Snapshot saved to: " + snapshotFile);
         }
 
@@ -101,10 +103,12 @@ namespace QuickBackup
             var oldSnapshot = engine.LoadSnapshot(snapshotFile);
 
             Console.WriteLine("Scanning folder: " + folderPath);
-            var newSnapshot = engine.ScanFolder(folderPath);
+            var newSnapshot = engine.ScanFolder(folderPath, ProgressCallback);
+            Console.WriteLine();
 
             Console.WriteLine("Comparing files...");
-            var changes = engine.CompareSnapshots(oldSnapshot, newSnapshot);
+            var changes = engine.CompareSnapshots(oldSnapshot, newSnapshot, ProgressCallback);
+            Console.WriteLine();
 
             if (changes.AddedFiles.Count == 0 && changes.ModifiedFiles.Count == 0 && changes.DeletedFiles.Count == 0)
             {
@@ -118,12 +122,31 @@ namespace QuickBackup
             Console.WriteLine("  Deleted:  " + changes.DeletedFiles.Count + " files");
 
             Console.WriteLine("Copying changed files to: " + outputFolder);
-            engine.CopyChangedFiles(folderPath, changes, outputFolder);
+            engine.CopyChangedFiles(folderPath, changes, outputFolder, ProgressCallback);
+            Console.WriteLine();
 
             Console.WriteLine("Done. Changed files copied to: " + outputFolder);
 
             engine.SaveSnapshot(newSnapshot, snapshotFile);
             Console.WriteLine("Snapshot updated.");
+        }
+
+        static void ProgressCallback(int processed, int total, string currentFile)
+        {
+            lock (_consoleLock)
+            {
+                int percent = total > 0 ? (processed * 100) / total : 0;
+                string fileName = System.IO.Path.GetFileName(currentFile);
+                if (fileName.Length > 30)
+                {
+                    fileName = fileName.Substring(0, 27) + "...";
+                }
+                Console.Write("\r[{0,3}%] {1}/{2} - {3,-35}", percent, processed, total, fileName);
+                if (processed >= total)
+                {
+                    Console.Write("\r" + new string(' ', Console.WindowWidth - 1) + "\r");
+                }
+            }
         }
 
         static void PrintUsage()
