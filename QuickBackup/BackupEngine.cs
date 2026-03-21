@@ -14,25 +14,33 @@ namespace QuickBackup
 
         public FileSnapshot ScanFolder(string folderPath)
         {
+            folderPath = Path.GetFullPath(folderPath);
             var snapshot = new FileSnapshot
             {
-                RootPath = Path.GetFullPath(folderPath),
+                RootPath = folderPath,
                 CreatedTime = DateTime.UtcNow
             };
 
-            var files = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories);
+            var files = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories)
+                .Where(f => File.Exists(f)).ToArray();
 
             foreach (var file in files)
             {
-                var fi = new FileInfo(file);
-                var entry = new FileEntry
+                try
                 {
-                    RelativePath = GetRelativePath(snapshot.RootPath, file),
-                    Size = fi.Length,
-                    LastModified = fi.LastWriteTimeUtc,
-                    Sha256 = ComputeSha256(file)
-                };
-                snapshot.Files.Add(entry);
+                    var fi = new FileInfo(file);
+                    var entry = new FileEntry
+                    {
+                        RelativePath = GetRelativePath(snapshot.RootPath, file),
+                        Size = fi.Length,
+                        LastModified = fi.LastWriteTimeUtc,
+                        Sha256 = ComputeSha256(file)
+                    };
+                    snapshot.Files.Add(entry);
+                }
+                catch (Exception)
+                {
+                }
             }
 
             return snapshot;
