@@ -12,7 +12,13 @@ namespace QuickBackup
 {
     public class BackupEngine
     {
-        private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer();
+        private readonly JavaScriptSerializer _serializer;
+
+        public BackupEngine()
+        {
+            _serializer = new JavaScriptSerializer();
+            _serializer.MaxJsonLength = int.MaxValue;
+        }
         private int _processedFiles = 0;
         private int _totalFiles = 0;
 
