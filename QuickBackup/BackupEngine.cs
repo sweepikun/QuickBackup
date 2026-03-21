@@ -183,20 +183,17 @@ namespace QuickBackup
 
         private string GetRelativePath(string rootPath, string filePath)
         {
-            if (!rootPath.EndsWith(Path.DirectorySeparatorChar.ToString()) && !rootPath.EndsWith(Path.AltDirectorySeparatorChar.ToString()))
-            {
-                rootPath += Path.DirectorySeparatorChar;
-            }
+            rootPath = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             string fullPath = Path.GetFullPath(filePath);
-            if (fullPath.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+            if (fullPath.StartsWith(rootPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             {
-                return fullPath.Substring(rootPath.Length);
+                return fullPath.Substring(rootPath.Length + 1);
             }
-            Uri rootUri = new Uri(rootPath);
-            Uri fileUri = new Uri(fullPath);
-            Uri relativeUri = rootUri.MakeRelativeUri(fileUri);
-            string relativePath = Uri.UnescapeDataString(relativeUri.ToString());
-            return relativePath.Replace('/', Path.DirectorySeparatorChar);
+            if (fullPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return "";
+            }
+            throw new InvalidOperationException("File path is not under root path: " + filePath);
         }
     }
 }
