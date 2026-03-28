@@ -22,7 +22,7 @@ namespace QuickBackup
         private int _processedFiles = 0;
         private int _totalFiles = 0;
 
-        public FileSnapshot ScanFolder(string folderPath, Action<int, int, string> progressCallback = null)
+        public FileSnapshot ScanFolder(string folderPath, bool computeHash = true, Action<int, int, string> progressCallback = null)
         {
             folderPath = Path.GetFullPath(folderPath);
             var snapshot = new FileSnapshot
@@ -39,29 +39,58 @@ namespace QuickBackup
 
             var results = new ConcurrentBag<FileEntry>();
 
-            Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
-                file =>
-                {
-                    try
+            if (computeHash)
+            {
+                Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    file =>
                     {
-                        var fi = new FileInfo(file);
-                        var entry = new FileEntry
+                        try
                         {
-                            RelativePath = GetRelativePath(folderPath, file),
-                            Size = fi.Length,
-                            LastModified = fi.LastWriteTimeUtc,
-                            Sha256 = ComputeSha256(file)
-                        };
-                        results.Add(entry);
+                            var fi = new FileInfo(file);
+                            var entry = new FileEntry
+                            {
+                                RelativePath = GetRelativePath(folderPath, file),
+                                Size = fi.Length,
+                                LastModified = fi.LastWriteTimeUtc,
+                                Sha256 = ComputeSha256(file)
+                            };
+                            results.Add(entry);
 
-                        var processed = System.Threading.Interlocked.Increment(ref _processedFiles);
-                        progressCallback?.Invoke(processed, _totalFiles, file);
-                    }
-                    catch (Exception)
+                            var processed = System.Threading.Interlocked.Increment(ref _processedFiles);
+                            progressCallback?.Invoke(processed, _totalFiles, file);
+                        }
+                        catch (Exception)
+                        {
+                            System.Threading.Interlocked.Increment(ref _processedFiles);
+                        }
+                    });
+            }
+            else
+            {
+                Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    file =>
                     {
-                        System.Threading.Interlocked.Increment(ref _processedFiles);
-                    }
-                });
+                        try
+                        {
+                            var fi = new FileInfo(file);
+                            var entry = new FileEntry
+                            {
+                                RelativePath = GetRelativePath(folderPath, file),
+                                Size = fi.Length,
+                                LastModified = fi.LastWriteTimeUtc,
+                                Sha256 = ""
+                            };
+                            results.Add(entry);
+
+                            var processed = System.Threading.Interlocked.Increment(ref _processedFiles);
+                            progressCallback?.Invoke(processed, _totalFiles, file);
+                        }
+                        catch (Exception)
+                        {
+                            System.Threading.Interlocked.Increment(ref _processedFiles);
+                        }
+                    });
+            }
 
             snapshot.Files = results.ToList();
             return snapshot;
@@ -131,6 +160,69 @@ namespace QuickBackup
                     if (oldDict.ContainsKey(entry.RelativePath))
                     {
                         if (oldDict[entry.RelativePath].Sha256 != entry.Sha256)
+                        {
+                            lock (result.ModifiedFiles)
+                            {
+                                result.ModifiedFiles.Add(entry);
+                            }
+                        }
+                        else
+                        {
+                            lock (result.UnchangedFiles)
+                            {
+                                result.UnchangedFiles.Add(entry);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        lock (result.AddedFiles)
+                        {
+                            result.AddedFiles.Add(entry);
+                        }
+                    }
+
+                    var p = System.Threading.Interlocked.Increment(ref processed);
+                    progressCallback?.Invoke(p, total, entry.RelativePath);
+                });
+
+            foreach (var kvp in oldDict)
+            {
+                if (!newDict.ContainsKey(kvp.Key))
+                {
+                    result.DeletedFiles.Add(kvp.Value);
+                }
+            }
+
+            return result;
+        }
+
+        public DiffResult CompareSnapshotsByTime(FileSnapshot oldSnapshot, FileSnapshot newSnapshot, Action<int, int, string> progressCallback = null)
+        {
+            var result = new DiffResult();
+
+            var oldDict = new Dictionary<string, FileEntry>();
+            foreach (var entry in oldSnapshot.Files)
+            {
+                oldDict[entry.RelativePath] = entry;
+            }
+
+            var newDict = new Dictionary<string, FileEntry>();
+            foreach (var entry in newSnapshot.Files)
+            {
+                newDict[entry.RelativePath] = entry;
+            }
+
+            int processed = 0;
+            int total = newSnapshot.Files.Count;
+
+            Parallel.ForEach(newSnapshot.Files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                entry =>
+                {
+                    if (oldDict.ContainsKey(entry.RelativePath))
+                    {
+                        var oldEntry = oldDict[entry.RelativePath];
+                        if (oldEntry.LastModified != entry.LastModified || oldEntry.Size != entry.Size)
                         {
                             lock (result.ModifiedFiles)
                             {

@@ -65,7 +65,7 @@ namespace QuickBackup
 
             Console.WriteLine("Scanning folder: " + folderPath);
             BackupEngine engine = new BackupEngine();
-            var snapshot = engine.ScanFolder(folderPath, ProgressCallback);
+            var snapshot = engine.ScanFolder(folderPath, true, ProgressCallback);
             Console.WriteLine("\nScan complete. " + snapshot.Files.Count + " files recorded.");
             engine.SaveSnapshot(snapshot, snapshotFile);
             Console.WriteLine("Snapshot saved to: " + snapshotFile);
@@ -73,18 +73,40 @@ namespace QuickBackup
 
         static void HandleDiff(string[] args)
         {
-            if (args.Length < 4)
+            bool fastMode = false;
+            string folderPath = null;
+            string snapshotFile = null;
+            string outputFolder = null;
+
+            for (int i = 1; i < args.Length; i++)
             {
-                Console.WriteLine("Usage: QuickBackup diff <folder_path> <snapshot_file> <output_folder>");
+                if (args[i].ToLower() == "-fast")
+                {
+                    fastMode = true;
+                }
+                else if (folderPath == null)
+                {
+                    folderPath = args[i];
+                }
+                else if (snapshotFile == null)
+                {
+                    snapshotFile = args[i];
+                }
+                else if (outputFolder == null)
+                {
+                    outputFolder = args[i];
+                }
+            }
+
+            if (folderPath == null || snapshotFile == null || outputFolder == null)
+            {
+                Console.WriteLine("Usage: QuickBackup diff [-fast] <folder_path> <snapshot_file> <output_folder>");
+                Console.WriteLine("  -fast          : Fast mode, compare by modified time & size only");
                 Console.WriteLine("  folder_path    : Folder to scan for changes");
                 Console.WriteLine("  snapshot_file  : Previous snapshot file");
                 Console.WriteLine("  output_folder  : Folder to save changed files");
                 return;
             }
-
-            string folderPath = args[1];
-            string snapshotFile = args[2];
-            string outputFolder = args[3];
 
             if (!System.IO.Directory.Exists(folderPath))
             {
@@ -102,12 +124,16 @@ namespace QuickBackup
             BackupEngine engine = new BackupEngine();
             var oldSnapshot = engine.LoadSnapshot(snapshotFile);
 
+            Console.WriteLine("Mode: " + (fastMode ? "Fast (time & size)" : "Full (SHA256)"));
+
             Console.WriteLine("Scanning folder: " + folderPath);
-            var newSnapshot = engine.ScanFolder(folderPath, ProgressCallback);
+            var newSnapshot = engine.ScanFolder(folderPath, !fastMode, ProgressCallback);
             Console.WriteLine();
 
             Console.WriteLine("Comparing files...");
-            var changes = engine.CompareSnapshots(oldSnapshot, newSnapshot, ProgressCallback);
+            var changes = fastMode
+                ? engine.CompareSnapshotsByTime(oldSnapshot, newSnapshot, ProgressCallback)
+                : engine.CompareSnapshots(oldSnapshot, newSnapshot, ProgressCallback);
             Console.WriteLine();
 
             if (changes.AddedFiles.Count == 0 && changes.ModifiedFiles.Count == 0 && changes.DeletedFiles.Count == 0)
@@ -157,8 +183,9 @@ namespace QuickBackup
             Console.WriteLine("  scan <folder_path> <snapshot_file>");
             Console.WriteLine("      Scan a folder and save file checksums to snapshot.");
             Console.WriteLine();
-            Console.WriteLine("  diff <folder_path> <snapshot_file> <output_folder>");
+            Console.WriteLine("  diff [-fast] <folder_path> <snapshot_file> <output_folder>");
             Console.WriteLine("      Compare folder with snapshot, copy changed files to output.");
+            Console.WriteLine("      -fast : Use modified time & size comparison (instant, no hash).");
             Console.WriteLine();
             Console.WriteLine("  help");
             Console.WriteLine("      Show this help message.");
@@ -166,6 +193,7 @@ namespace QuickBackup
             Console.WriteLine("Examples:");
             Console.WriteLine("  QuickBackup scan C:\\MyData snapshot.json");
             Console.WriteLine("  QuickBackup diff C:\\MyData snapshot.json C:\\BackupOutput");
+            Console.WriteLine("  QuickBackup diff -fast C:\\MyData snapshot.json C:\\BackupOutput");
         }
     }
 }
