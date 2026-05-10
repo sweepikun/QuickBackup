@@ -125,7 +125,7 @@ namespace QuickBackup
                             RelativePath = fileDict.ContainsKey("RelativePath") ? fileDict["RelativePath"] as string : "",
                             Sha256 = fileDict.ContainsKey("Sha256") ? fileDict["Sha256"] as string : "",
                             Size = fileDict.ContainsKey("Size") ? Convert.ToInt64(fileDict["Size"]) : 0,
-                            LastModified = fileDict.ContainsKey("LastModified") ? DateTime.Parse(fileDict["LastModified"].ToString()) : DateTime.MinValue
+                            LastModified = fileDict.ContainsKey("LastModified") ? ParseDateTime(fileDict["LastModified"]) : DateTime.MinValue
                         };
                         snapshot.Files.Add(entry);
                     }
@@ -222,7 +222,8 @@ namespace QuickBackup
                     if (oldDict.ContainsKey(entry.RelativePath))
                     {
                         var oldEntry = oldDict[entry.RelativePath];
-                        if (oldEntry.LastModified != entry.LastModified || oldEntry.Size != entry.Size)
+                        var diff = Math.Abs((oldEntry.LastModified - entry.LastModified).TotalSeconds);
+                        if (diff > 2 || oldEntry.Size != entry.Size)
                         {
                             lock (result.ModifiedFiles)
                             {
@@ -324,6 +325,15 @@ namespace QuickBackup
                 }
                 return sb.ToString();
             }
+        }
+
+        private DateTime ParseDateTime(object value)
+        {
+            if (value is DateTime)
+            {
+                return ((DateTime)value).ToUniversalTime();
+            }
+            return DateTime.Parse(value.ToString()).ToUniversalTime();
         }
 
         private string GetRelativePath(string rootPath, string filePath)

@@ -5,6 +5,8 @@ namespace QuickBackup
     class Program
     {
         static object _consoleLock = new object();
+        static int _lastReportedPercent = -1;
+        static DateTime _lastReportTime = DateTime.MinValue;
 
         static void Main(string[] args)
         {
@@ -159,18 +161,31 @@ namespace QuickBackup
 
         static void ProgressCallback(int processed, int total, string currentFile)
         {
+            int percent = total > 0 ? (processed * 100) / total : 0;
+            bool isFinal = processed >= total;
+            var now = DateTime.UtcNow;
+
+            if (!isFinal && percent == _lastReportedPercent && (now - _lastReportTime).TotalMilliseconds < 100)
+            {
+                return;
+            }
+
             lock (_consoleLock)
             {
-                int percent = total > 0 ? (processed * 100) / total : 0;
-                string fileName = System.IO.Path.GetFileName(currentFile);
-                if (fileName.Length > 30)
+                if (!isFinal && percent == _lastReportedPercent && (now - _lastReportTime).TotalMilliseconds < 100)
                 {
-                    fileName = fileName.Substring(0, 27) + "...";
+                    return;
                 }
-                Console.Write("\r[{0,3}%] {1}/{2} - {3,-35}", percent, processed, total, fileName);
-                if (processed >= total)
+                _lastReportedPercent = percent;
+                _lastReportTime = now;
+
+                string line = string.Format("[{0,3}%] {1}/{2}", percent, processed, total);
+                if (line.Length > 60) line = line.Substring(0, 60);
+                Console.Write("\r" + line.PadRight(70));
+                if (isFinal)
                 {
-                    Console.Write("\r" + new string(' ', Console.WindowWidth - 1) + "\r");
+                    Console.Write("\r" + new string(' ', 70) + "\r");
+                    _lastReportedPercent = -1;
                 }
             }
         }
